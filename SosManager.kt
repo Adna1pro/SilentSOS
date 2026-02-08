@@ -7,7 +7,6 @@ import android.telephony.SmsManager
 
 class SosManager(private val context: Context) {
 
-    // Send SOS SMS
     fun sendSosSms(phoneNumber: String, message: String) {
         val smsManager = SmsManager.getDefault()
         smsManager.sendTextMessage(
@@ -19,12 +18,11 @@ class SosManager(private val context: Context) {
         )
     }
 
-    // Initiate emergency call
     fun makeEmergencyCall(phoneNumber: String) {
-        val callIntent = Intent(Intent.ACTION_CALL).apply {
+        val intent = Intent(Intent.ACTION_CALL).apply {
             data = Uri.parse("tel:$phoneNumber")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        context.startActivity(callIntent)
+        context.startActivity(intent)
     }
 }

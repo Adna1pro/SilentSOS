@@ -1,6 +1,7 @@
 package com.example.silentsos
-
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.AudioManager
@@ -10,10 +11,12 @@ import android.os.CountDownTimer
 import android.view.Gravity
 import android.view.animation.AlphaAnimation
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import android.graphics.drawable.ColorDrawable
 
 class MainActivity : ComponentActivity() {
 
@@ -33,6 +36,10 @@ class MainActivity : ComponentActivity() {
     // Logic
     private val distressDetector = DistressDetector()
 
+    // Settings (APPLIED)
+    private var countdownSeconds = 10
+    private var sensitivityLevel = 1   // 0=Low, 1=Medium, 2=High
+
     // State
     private var countdownTimer: CountDownTimer? = null
     private var countdownRunning = false
@@ -46,9 +53,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        loadSettings()
+
+        val rootLayout = FrameLayout(this)
+
         statusText = TextView(this).apply {
             text = "SilentSOS Active\n\n🟢 MONITORING"
-            textSize = 22f
+            textSize = 26f
             setTextColor(Color.GREEN)
             gravity = Gravity.CENTER
             layoutParams = FrameLayout.LayoutParams(
@@ -56,7 +67,28 @@ class MainActivity : ComponentActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
-        setContentView(statusText)
+
+        val settingsIcon = ImageView(this).apply {
+            setImageResource(android.R.drawable.ic_menu_preferences)
+            scaleX = 1.4f
+            scaleY = 1.4f
+            setPadding(40, 40, 40, 40)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END
+            ).apply {
+                topMargin = 40
+                rightMargin = 40
+            }
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+            }
+        }
+
+        rootLayout.addView(statusText)
+        rootLayout.addView(settingsIcon)
+        setContentView(rootLayout)
 
         sensorHandler = SensorHandler(this) { accel ->
             lastAccel = accel
@@ -72,17 +104,18 @@ class MainActivity : ComponentActivity() {
             updateMonitoringUI()
         }
 
-        requestAudioPermission()
+        statusText.setOnClickListener { cancelCountdown() }
 
-        statusText.setOnClickListener {
-            cancelCountdown()
-        }
+        requestAudioPermission()
     }
 
     override fun onResume() {
         super.onResume()
+        loadSettings()          // 🔴 RELOAD when returning from Settings
+        applySensitivity()     // 🔴 APPLY sensitivity immediately
         sensorHandler.start()
         gyroHandler.start()
+        if (hasAudioPermission()) startMicSafely()
     }
 
     override fun onPause() {
@@ -93,20 +126,35 @@ class MainActivity : ComponentActivity() {
         micRunning = false
     }
 
-    // ---------- Permission ----------
+    // ---------- SETTINGS ----------
+    private fun loadSettings() {
+        val prefs = getSharedPreferences("SilentSOSPrefs", Context.MODE_PRIVATE)
+        countdownSeconds = prefs.getInt("countdown", 10)
+        sensitivityLevel = prefs.getInt("sensitivity", 1)
+    }
+
+    private fun applySensitivity() {
+        when (sensitivityLevel) {
+            0 -> distressDetector.setSensitivity(low = true)
+            1 -> distressDetector.setSensitivity(medium = true)
+            2 -> distressDetector.setSensitivity(high = true)
+        }
+    }
+
+    // ---------- PERMISSIONS ----------
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
     private fun requestAudioPermission() {
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!hasAudioPermission()) {
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(Manifest.permission.RECORD_AUDIO),
                 AUDIO_PERMISSION_CODE
             )
-        } else {
-            startMicSafely()
         }
     }
 
@@ -116,22 +164,20 @@ class MainActivity : ComponentActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-
-        if (
-            requestCode == AUDIO_PERMISSION_CODE &&
+        if (requestCode == AUDIO_PERMISSION_CODE &&
             grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED
-        ) {
-            startMicSafely()
-        }
+        ) startMicSafely()
     }
 
+    // ---------- MICROPHONE ----------
     private fun startMicSafely() {
         if (micRunning) return
         micRunning = true
 
         soundHandler = SoundHandler { amplitude ->
             lastSound = amplitude
+            distressDetector.updateAccelerometer(lastAccel + 0.5f)
             distressDetector.updateSoundLevel(amplitude)
             checkForDistress()
             updateMonitoringUI()
@@ -148,8 +194,6 @@ class MainActivity : ComponentActivity() {
     private fun updateMonitoringUI() {
         if (!countdownRunning) {
             runOnUiThread {
-                statusText.clearAnimation()
-                statusText.setTextColor(Color.GREEN)
                 statusText.text =
                     """
                     🟢 MONITORING
@@ -162,33 +206,38 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // ---------- Detection ----------
+    // ---------- DETECTION ----------
     private fun checkForDistress() {
         if (!countdownRunning && !sosAlreadySent &&
             distressDetector.isDistressConfirmed()
-        ) {
-            startCountdown()
-        }
+        ) startCountdown()
     }
 
-    // ---------- Countdown ----------
+    // ---------- COUNTDOWN (FIXED) ----------
     private fun startCountdown() {
         countdownRunning = true
 
-        val blink = AlphaAnimation(0f, 1f).apply {
+        val blinkText = AlphaAnimation(0f, 1f).apply {
+            duration = 500
+            repeatMode = AlphaAnimation.REVERSE
+            repeatCount = AlphaAnimation.INFINITE
+        }
+
+        val blinkBg = AlphaAnimation(0.3f, 1f).apply {
             duration = 500
             repeatMode = AlphaAnimation.REVERSE
             repeatCount = AlphaAnimation.INFINITE
         }
 
         runOnUiThread {
-            statusText.startAnimation(blink)
+            statusText.setBackgroundColor(Color.RED)
+            statusText.startAnimation(blinkText)
         }
 
-        countdownTimer = object : CountDownTimer(10_000, 1_000) {
+        countdownTimer = object : CountDownTimer(countdownSeconds * 1000L, 1000) {
             override fun onTick(ms: Long) {
                 runOnUiThread {
-                    statusText.setTextColor(Color.RED)
+                    statusText.setTextColor(Color.WHITE)
                     statusText.text =
                         "🚨 DISTRESS DETECTED 🚨\n\nSending SOS in ${ms / 1000}s\n\nTap to cancel"
                 }
@@ -197,13 +246,10 @@ class MainActivity : ComponentActivity() {
 
             override fun onFinish() {
                 countdownRunning = false
-                runOnUiThread {
-                    triggerSosDemo()
-                }
+                runOnUiThread { triggerSosDemo() }
             }
         }.start()
     }
-
     private fun cancelCountdown() {
         if (countdownRunning) {
             countdownTimer?.cancel()
@@ -212,11 +258,12 @@ class MainActivity : ComponentActivity() {
                 statusText.clearAnimation()
                 statusText.setTextColor(Color.GREEN)
                 statusText.text = "🟢 MONITORING\n\nCancelled"
+                statusText.setBackgroundColor(Color.TRANSPARENT)
             }
         }
     }
 
-    // ---------- DEMO-SAFE SOS ----------
+    // ---------- DEMO SAFE ----------
     private fun triggerSosDemo() {
         sosAlreadySent = true
         statusText.clearAnimation()
@@ -226,11 +273,9 @@ class MainActivity : ComponentActivity() {
             🚨 SOS TRIGGERED 🚨
 
             Demo Mode Active
-            Alert would be sent now
             """.trimIndent()
     }
 
-    // ---------- Sound ----------
     private fun playBeep() {
         val tone = ToneGenerator(AudioManager.STREAM_ALARM, 80)
         tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 150)

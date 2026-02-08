@@ -49,6 +49,9 @@ class SoundHandler(
         thread(start = true) {
             val buffer = ShortArray(bufferSize)
 
+            // Smoothing for more stable sound detection
+            var smoothRms = 0.0
+            val alpha = 0.25 // smoothing factor (0 = no smoothing, 1 = instant)
             while (running) {
                 val record = audioRecord ?: break
                 val read = record.read(buffer, 0, buffer.size)
@@ -59,7 +62,8 @@ class SoundHandler(
                         sum += buffer[i] * buffer[i]
                     }
                     val rms = sqrt(sum / read)
-                    onSoundLevelDetected(rms.toInt())
+                    smoothRms = if (smoothRms == 0.0) rms else (alpha * rms + (1 - alpha) * smoothRms)
+                    onSoundLevelDetected(smoothRms.toInt())
                 }
 
                 Thread.sleep(250)

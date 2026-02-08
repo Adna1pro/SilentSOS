@@ -2,73 +2,88 @@ package com.example.silentsos
 
 class DistressDetector {
 
-    companion object {
-        // Impact thresholds
-        const val ACCEL_THRESHOLD = 21.0f     // Strong linear impact (unchanged)
+    // Runtime-adjustable thresholds (SAFE TUNING)
+    var ACCEL_THRESHOLD = 23.0f     // was 21
+    var GYRO_THRESHOLD = 2.2f       // was 1.8
+    var SOUND_THRESHOLD = 5000    // clap / loud shout only
 
-        // 🔄 Gyroscope threshold (slightly more sensitive for testing)
-        const val GYRO_THRESHOLD = 4.0f       // Sudden rotation
+    private val TIME_WINDOW_MS = 2000L
+    private val SOUND_SUSTAIN_MS = 50L
 
-        // 🔊 Sound threshold (reduced to trigger above normal speech)
-        // Normal speech ~2000–5000, loud shout/clap ~7000+
-        const val SOUND_THRESHOLD = 5000     // Loud voice / clap / bang
-
-        // Time window for sensor fusion
-        const val TIME_WINDOW_MS = 2000L      // 2 seconds
-    }
-
-    // Sensor state flags
+    // Sensor state
     private var accelTriggered = false
     private var gyroTriggered = false
     private var soundTriggered = false
-    private var firstTriggerTime: Long = 0
 
-    // --------- SENSOR UPDATES ---------
+    private var firstTriggerTime = 0L
+    private var soundStartTime = 0L
 
-    fun updateAccelerometer(acceleration: Float) {
-        if (acceleration >= ACCEL_THRESHOLD) {
+    // --------- SENSITIVITY ----------
+    fun setSensitivity(low: Boolean = false, medium: Boolean = false, high: Boolean = false) {
+        when {
+            low -> {
+                ACCEL_THRESHOLD = 26.0f
+                GYRO_THRESHOLD = 2.8f
+                SOUND_THRESHOLD = 10000
+            }
+            medium -> {
+                ACCEL_THRESHOLD = 23.0f
+                GYRO_THRESHOLD = 2.2f
+                SOUND_THRESHOLD = 8000
+            }
+            high -> {
+                ACCEL_THRESHOLD = 19.0f
+                GYRO_THRESHOLD = 1.5f
+                SOUND_THRESHOLD = 6000
+            }
+        }
+    }
+
+    // --------- SENSOR INPUTS ----------
+    fun updateAccelerometer(accel: Float) {
+        if (accel >= ACCEL_THRESHOLD) {
             registerTrigger { accelTriggered = true }
         }
     }
 
-    fun updateGyroscope(rotation: Float) {
-        if (rotation >= GYRO_THRESHOLD) {
+    fun updateGyroscope(gyro: Float) {
+        if (gyro >= GYRO_THRESHOLD) {
             registerTrigger { gyroTriggered = true }
         }
     }
 
-    fun updateSoundLevel(amplitude: Int) {
-        if (amplitude >= SOUND_THRESHOLD) {
-            registerTrigger { soundTriggered = true }
+    fun updateSoundLevel(sound: Int) {
+        val now = System.currentTimeMillis()
+
+        if (sound >= SOUND_THRESHOLD) {
+            if (soundStartTime == 0L) {
+                soundStartTime = now
+            }
+            if (now - soundStartTime >= SOUND_SUSTAIN_MS) {
+                registerTrigger { soundTriggered = true }
+            }
+        } else {
+            soundStartTime = 0L
         }
     }
 
-    // --------- CORE LOGIC ---------
-
-    private fun registerTrigger(onTrigger: () -> Unit) {
+    // --------- CORE LOGIC ----------
+    private fun registerTrigger(action: () -> Unit) {
         val now = System.currentTimeMillis()
 
-        if (firstTriggerTime == 0L) {
-            firstTriggerTime = now
-        }
+        if (firstTriggerTime == 0L) firstTriggerTime = now
 
         if (now - firstTriggerTime <= TIME_WINDOW_MS) {
-            onTrigger()
+            action()
         } else {
             reset()
         }
     }
 
-    /**
-     * Distress confirmed when:
-     * - Accelerometer + Gyroscope
-     * OR
-     * - Accelerometer + Loud Sound
-     */
     fun isDistressConfirmed(): Boolean {
         val confirmed =
             (accelTriggered && gyroTriggered) ||
-            (accelTriggered && soundTriggered)
+                    (accelTriggered && soundTriggered)
 
         if (confirmed) {
             reset()
@@ -81,6 +96,7 @@ class DistressDetector {
         accelTriggered = false
         gyroTriggered = false
         soundTriggered = false
-        firstTriggerTime = 0
+        firstTriggerTime = 0L
+        soundStartTime = 0L
     }
 }
