@@ -7,7 +7,7 @@ import android.view.Gravity
 import android.widget.*
 import androidx.activity.ComponentActivity
 
-class SettingsActivity : ComponentActivity() {
+class SettingsActivity : ComponntActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
